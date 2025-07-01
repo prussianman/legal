@@ -1,14 +1,15 @@
 import pandas as pd
 
-# 1. Your initial DataFrame, which we assume exists
-# For this example, we'll create it from scratch.
+# 1. Your initial DataFrame, now with more metadata columns
 data = {
     'document_id': ['doc_A_01', 'doc_B_02'],
     'author': ['Alice', 'Bob'],
+    'case_name': ['WorldCom Litigation', 'Enron Case'],
+    'citation_date': ['2004-07-01', '2006-05-25'],
     'embeddings_data': [
         {
-            "embedding_text": ['This is chunk 1.', 'This is chunk 2.', 'This is chunk 3.'],
-            "embedding_vector": [[0.1, 0.2], [0.3, 0.4], [0.5, 0.6]]
+            "embedding_text": ['This is chunk 1.', 'This is chunk 2.'],
+            "embedding_vector": [[0.1, 0.2], [0.3, 0.4]]
         },
         {
             "embedding_text": ['Another document, first part.', 'Another document, second part.'],
@@ -18,47 +19,45 @@ data = {
 }
 df_initial = pd.DataFrame(data)
 
-print("--- Initial DataFrame ---")
+print("--- 1. Initial DataFrame with Multiple Metadata Columns ---")
 print(df_initial)
 
 
-# 2. The Complete Transformation Logic
-# This function-like block contains the final, robust process.
-
-# Initialize an empty list to hold the new, flattened rows
+# 2. The Scalable Transformation Logic
 all_nodes_data = []
 
-# Iterate through each row of the original DataFrame
+# The column containing the dictionary to be unpacked
+dict_column_name = 'embeddings_data'
+
 for index, row in df_initial.iterrows():
-    # Get the identifying information that will be duplicated
-    doc_id = row['document_id']
-    author = row['author']
+    # --- THIS IS THE KEY CHANGE ---
+    # Create a base dictionary of the row's original data,
+    # EXCLUDING the column we are about to unpack.
+    base_data = row.drop(dict_column_name).to_dict()
     
     # Get the dictionary containing the parallel lists
-    data_dict = row['embeddings_data']
+    data_dict = row[dict_column_name]
     
-    # Safely get the lists from the dictionary
     texts = data_dict.get('embedding_text', [])
     vectors = data_dict.get('embedding_vector', [])
     
-    # Loop through the parallel lists and create a new record for each pair
+    # Loop through the parallel lists
     for i, (text, vector) in enumerate(zip(texts, vectors)):
+        # Start with a copy of the original row's data
+        new_row = base_data.copy()
         
-        # Generate a new, unique primary key for this specific node
-        node_id = f"{doc_id}_node_{i}"
+        # Generate the new, unique primary key for this node
+        node_id = f"{base_data['document_id']}_node_{i}"
         
-        # Append the fully structured data for this new row to our list
-        all_nodes_data.append({
-            'node_id': node_id,          # The new primary key
-            'document_id': doc_id,       # The original source ID (foreign key)
-            'author': author,            # Other metadata from the original row
-            'text_chunk': text,          # The text to be embedded
-            'vector': vector             # The corresponding vector
-        })
+        # Add the new, unpacked data to this specific row
+        new_row['node_id'] = node_id
+        new_row['text_chunk'] = text
+        new_row['vector'] = vector
+        
+        all_nodes_data.append(new_row)
 
-# 3. Create the final, clean DataFrame from the list of dictionaries
+# 3. Create the final DataFrame
 df_final = pd.DataFrame(all_nodes_data)
 
-
-print("\n--- Final Production-Ready DataFrame ---")
+print("\n--- 2. Final DataFrame with ALL Original Columns Preserved ---")
 print(df_final)
