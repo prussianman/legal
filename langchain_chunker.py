@@ -15,8 +15,7 @@ import tiktoken
 # os.environ["OPENAI_API_KEY"] = "sk-..."
 
 # --- NLTK Setup ---
-# The sentence tokenizer needs the 'punkt' dataset.
-# This downloads it if you don't have it already.
+# The sentence tokenizer is used by the splitter for more intelligent splitting.
 try:
     sent_tokenize("test sentence.")
 except LookupError:
@@ -36,7 +35,7 @@ def get_openai_client():
 
 def get_embedding(text: str, client: OpenAI, model: str = "text-embedding-3-small") -> list[float]:
     """
-    Generates a vector embedding for a given text sentence by calling the OpenAI API.
+    Generates a vector embedding for a given text string by calling the OpenAI API.
     """
     normalized_text = ' '.join(text.strip().split())
     try:
@@ -91,7 +90,8 @@ def split_text_by_tokens(text: str, chunk_size: int = 1024, chunk_overlap_ratio:
 def process_chunk_row(row: pd.Series, text_column: str, openai_client: OpenAI) -> list[dict]:
     """
     (Helper Function) Takes a DataFrame row, splits very large text into sub-chunks if needed,
-    then gets embeddings for each sentence, and combines them with metadata.
+    then gets ONE embedding for EACH sub-chunk, and combines them with metadata.
+    This implements the recommended strategy for Azure AI Search.
     """
     text_chunk = row.get(text_column, "")
     if not isinstance(text_chunk, str) or not text_chunk.strip():
@@ -100,32 +100,27 @@ def process_chunk_row(row: pd.Series, text_column: str, openai_client: OpenAI) -
     # Pre-process the large chunk into smaller, manageable sub-chunks using token logic
     sub_chunks = split_text_by_tokens(text_chunk)
     
-    all_sentence_records = []
+    all_sub_chunk_records = []
     metadata = row.drop(text_column).to_dict()
 
     for i, sub_chunk in enumerate(sub_chunks):
-        sentences = sent_tokenize(sub_chunk)
+        # Get the embedding for the entire sub-chunk
+        embedding_vector = get_embedding(sub_chunk, openai_client)
         
-        for sentence in sentences:
-            clean_sentence = sentence.strip()
-            if not clean_sentence:
-                continue
-                
-            embedding_vector = get_embedding(clean_sentence, openai_client)
+        if embedding_vector:
+            new_record = metadata.copy()
+            # Add a sub_chunk_id to track which part of the original chunk it came from
+            new_record['sub_chunk_id'] = i 
+            # Store the sub-chunk text itself
+            new_record['sub_chunk_text'] = sub_chunk
+            new_record['embedding'] = embedding_vector
+            all_sub_chunk_records.append(new_record)
             
-            if embedding_vector:
-                new_record = metadata.copy()
-                # Add a sub_chunk_id to track which part of the original chunk it came from
-                new_record['sub_chunk_id'] = i 
-                new_record['sentence'] = clean_sentence
-                new_record['embedding'] = embedding_vector
-                all_sentence_records.append(new_record)
-            
-    return all_sentence_records
+    return all_sub_chunk_records
 
-def embed_sentences_from_df(df: pd.DataFrame, text_column: str, openai_client: OpenAI) -> pd.DataFrame:
+def embed_sub_chunks_from_df(df: pd.DataFrame, text_column: str, openai_client: OpenAI) -> pd.DataFrame:
     """
-    Applies the sentence embedding process to a DataFrame using a more modular approach.
+    Applies the sub-chunk embedding process to a DataFrame using a more modular approach.
     """
     processed_series = df.apply(
         lambda row: process_chunk_row(row, text_column, openai_client),
@@ -166,15 +161,15 @@ if __name__ == "__main__":
         client = get_openai_client()
 
         # 2. Call the main modular function
-        final_df = embed_sentences_from_df(original_df, text_column='text_chunk', openai_client=client)
+        final_df = embed_sub_chunks_from_df(original_df, text_column='text_chunk', openai_client=client)
 
         # 3. Display the results
         if not final_df.empty:
-            print(f"\nSuccessfully processed {len(original_df)} chunks into {len(final_df)} sentences.")
+            print(f"\nSuccessfully processed {len(original_df)} original chunks into {len(final_df)} sub-chunks.")
             
             print("\n--- New DataFrame with Metadata Preserved ---")
             # Reordering columns for clarity
-            cols = ['chunk_id', 'sub_chunk_id', 'source_doc', 'sentence', 'embedding']
+            cols = ['chunk_id', 'sub_chunk_id', 'source_doc', 'sub_chunk_text', 'embedding']
             # Ensure all desired columns are present before reordering
             final_cols = [col for col in cols if col in final_df.columns]
             print(final_df[final_cols].head().to_string())
