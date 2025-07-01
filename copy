@@ -1,0 +1,64 @@
+import pandas as pd
+
+# 1. Your initial DataFrame, which we assume exists
+# For this example, we'll create it from scratch.
+data = {
+    'document_id': ['doc_A_01', 'doc_B_02'],
+    'author': ['Alice', 'Bob'],
+    'embeddings_data': [
+        {
+            "embedding_text": ['This is chunk 1.', 'This is chunk 2.', 'This is chunk 3.'],
+            "embedding_vector": [[0.1, 0.2], [0.3, 0.4], [0.5, 0.6]]
+        },
+        {
+            "embedding_text": ['Another document, first part.', 'Another document, second part.'],
+            "embedding_vector": [[0.7, 0.8], [0.9, 1.0]]
+        }
+    ]
+}
+df_initial = pd.DataFrame(data)
+
+print("--- Initial DataFrame ---")
+print(df_initial)
+
+
+# 2. The Complete Transformation Logic
+# This function-like block contains the final, robust process.
+
+# Initialize an empty list to hold the new, flattened rows
+all_nodes_data = []
+
+# Iterate through each row of the original DataFrame
+for index, row in df_initial.iterrows():
+    # Get the identifying information that will be duplicated
+    doc_id = row['document_id']
+    author = row['author']
+    
+    # Get the dictionary containing the parallel lists
+    data_dict = row['embeddings_data']
+    
+    # Safely get the lists from the dictionary
+    texts = data_dict.get('embedding_text', [])
+    vectors = data_dict.get('embedding_vector', [])
+    
+    # Loop through the parallel lists and create a new record for each pair
+    for i, (text, vector) in enumerate(zip(texts, vectors)):
+        
+        # Generate a new, unique primary key for this specific node
+        node_id = f"{doc_id}_node_{i}"
+        
+        # Append the fully structured data for this new row to our list
+        all_nodes_data.append({
+            'node_id': node_id,          # The new primary key
+            'document_id': doc_id,       # The original source ID (foreign key)
+            'author': author,            # Other metadata from the original row
+            'text_chunk': text,          # The text to be embedded
+            'vector': vector             # The corresponding vector
+        })
+
+# 3. Create the final, clean DataFrame from the list of dictionaries
+df_final = pd.DataFrame(all_nodes_data)
+
+
+print("\n--- Final Production-Ready DataFrame ---")
+print(df_final)
