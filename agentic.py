@@ -18,6 +18,8 @@ from llama_index.core import (
 from llama_index.core.schema import NodeWithScore, QueryBundle
 from llama_index.core.retrievers import BaseRetriever
 from llama_index.core.node_parser import SentenceSplitter
+from llama_index.core.stores import SimpleDocumentStore
+from llama_index.storage.docstore.azure_blob import AzureBlobStorageKVStore
 from llama_index.vector_stores.azureaisearch import (
     AzureAISearchVectorStore,
     IndexManagement,
@@ -44,21 +46,22 @@ AZURE_SEARCH_KEY = os.environ.get("AZURE_SEARCH_KEY", "")
 AZURE_OPENAI_ENDPOINT = os.environ.get("AZURE_OPENAI_ENDPOINT", "")
 AZURE_OPENAI_API_KEY = os.environ.get("AZURE_OPENAI_API_KEY", "")
 AZURE_OPENAI_API_VERSION = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-02-01")
+AZURE_STORAGE_CONNECTION_STRING = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
+
 
 # Your Azure OpenAI model deployment names
 LLM_DEPLOYMENT_NAME = "gpt-4o"
 EMBEDDING_DEPLOYMENT_NAME = "text-embedding-3-large"
 
-# --- Names for your Azure AI Search Indexes ---
-# The script will create these if they don't exist.
-PARENT_INDEX_NAME = "llama-parent-docs" # This is managed by LlamaIndex's docstore
+# --- Names for your Azure AI Search Indexes and Storage Container ---
 CHILD_INDEX_NAME = "llama-child-chunks-vector"
+PARENT_DOC_CONTAINER_NAME = "parent-doc-store" # Container for persistent parent docs
 
 # Check for missing configuration
-if not all([AZURE_SEARCH_ENDPOINT, AZURE_SEARCH_KEY, AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY]):
+if not all([AZURE_SEARCH_ENDPOINT, AZURE_SEARCH_KEY, AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY, AZURE_STORAGE_CONNECTION_STRING]):
     raise ValueError(
-        "Azure credentials are not set. Please set the environment variables: "
-        "AZURE_SEARCH_ENDPOINT, AZURE_SEARCH_KEY, AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY"
+        "One or more Azure credentials are not set. Please set the environment variables: "
+        "AZURE_SEARCH_ENDPOINT, AZURE_SEARCH_KEY, AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY, AZURE_STORAGE_CONNECTION_STRING"
     )
 
 # --- 2. Setup LLM and Embedding Models ---
@@ -213,27 +216,41 @@ def main():
     )
     print(f"\n--- Azure AI Search Vector Store for child index '{CHILD_INDEX_NAME}' is ready ---")
 
-    # --- 4.3. Ingest Data ---
-    # We create a VectorStoreIndex over the child chunks.
-    # The parent documents are automatically stored in an in-memory docstore.
-    storage_context = StorageContext.from_defaults(vector_store=child_vector_store)
+    # --- 4.3. Ingest Data with Persistent Docstore ---
+    # For a persistent solution, we store parent documents in Azure Blob Storage.
+    print(f"\n--- Setting up persistent docstore in Azure Blob Storage container '{PARENT_DOC_CONTAINER_NAME}' ---")
+
+    # Create a key-value store backed by Azure Blob Storage
+    azure_kv_store = AzureBlobStorageKVStore(
+        connection_string=AZURE_STORAGE_CONNECTION_STRING,
+        container_name=PARENT_DOC_CONTAINER_NAME,
+    )
+
+    # Create a docstore that uses the Azure KV store for persistence
+    persistent_docstore = SimpleDocumentStore.from_kvstore(azure_kv_store)
+    
+    # We now combine our persistent docstore with our vector store in the StorageContext
+    storage_context = StorageContext.from_defaults(
+        vector_store=child_vector_store,
+        docstore=persistent_docstore
+    )
     
     # The node parser creates the child nodes from the parent documents.
-    # LlamaIndex automatically handles the parent-child relationship.
     node_parser = SentenceSplitter(chunk_size=64, chunk_overlap=4)
     
     # The service context bundles the components LlamaIndex uses for ingestion and querying
     service_context = ServiceContext.from_defaults(node_parser=node_parser)
 
-    # This single command does the heavy lifting:
+    # This single command now does the heavy lifting with persistence:
     # 1. Parses parent docs into child nodes.
     # 2. Generates embeddings for child nodes.
     # 3. Stores child nodes in the Azure AI Search child index.
-    # 4. Stores parent docs in the in-memory docstore.
+    # 4. Stores parent docs in the Azure Blob Storage container.
     child_index = VectorStoreIndex.from_documents(
-        docs, storage_context=storage_context, service_context=service_context
+        docs, storage_context=storage_context, service_context=service_context,
+        show_progress=True
     )
-    print(f"\n--- Ingestion complete. Child nodes stored in Azure. ---")
+    print(f"\n--- Ingestion complete. Child nodes in Azure AI Search, Parent docs in Azure Blob Storage. ---")
     
     # Give Azure a moment to finish indexing
     time.sleep(5)
@@ -242,7 +259,7 @@ def main():
     # 1. Create a standard retriever for the child index
     child_retriever = child_index.as_retriever(similarity_top_k=3)
     
-    # 2. Get the docstore where the parent docs are held
+    # 2. Get the docstore where the parent docs are held (now persistent)
     docstore = child_index.docstore
 
     # 3. Instantiate our custom retriever
