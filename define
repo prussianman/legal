@@ -105,6 +105,31 @@ history = model.fit(
 )
 
 
+
+#####
+
+import tf_keras # Using this as per your requirement
+
+# Assume CustomF1Score class is defined as in the previous answer
+f1_metric = CustomF1Score(num_classes=3)
+
+# 1. Checkpoint to save the best model file
+checkpoint_callback = tf_keras.callbacks.ModelCheckpoint(
+    filepath="best_sentiment_model.keras",
+    monitor='val_f1_score',
+    mode='max',
+    save_best_only=True
+)
+
+# 2. Early Stopping to prevent overfitting
+early_stopping_callback = tf_keras.callbacks.EarlyStopping(
+    monitor='val_f1_score',
+    patience=3, # Number of epochs with no improvement to wait before stopping
+    mode='max',
+    restore_best_weights=True, # Automatically restores the best weights at the end
+    verbose=1
+)
+
 ##############
 
 
