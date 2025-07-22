@@ -1,0 +1,67 @@
+import tensorflow as tf
+import tf_keras # Using this as per your requirement
+
+class CustomF1Score(tf_keras.metrics.Metric):
+    def __init__(self, num_classes, name='f1_score', **kwargs):
+        super().__init__(name=name, **kwargs)
+        self.num_classes = num_classes
+        self.epsilon = 1e-7 # Small value to prevent division by zero
+
+        # State variables to track true positives, false positives, and false negatives
+        self.tp = self.add_weight('true_positives', shape=(num_classes,), initializer='zeros')
+        self.fp = self.add_weight('false_positives', shape=(num_classes,), initializer='zeros')
+        self.fn = self.add_weight('false_negatives', shape=(num_classes,), initializer='zeros')
+
+    def update_state(self, y_true, y_pred, sample_weight=None):
+        # Convert logits to class predictions
+        y_pred = tf.argmax(y_pred, axis=1)
+        
+        # Ensure y_true is the correct type and shape
+        y_true = tf.cast(tf.squeeze(y_true), dtype=tf.int64)
+        
+        # Calculate the confusion matrix for the current batch
+        cm = tf.math.confusion_matrix(y_true, y_pred, num_classes=self.num_classes, dtype=tf.float32)
+
+        # Update state variables from the confusion matrix
+        self.tp.assign_add(tf.linalg.diag_part(cm))
+        self.fp.assign_add(tf.reduce_sum(cm, axis=0) - tf.linalg.diag_part(cm))
+        self.fn.assign_add(tf.reduce_sum(cm, axis=1) - tf.linalg.diag_part(cm))
+
+    def result(self):
+        # Calculate precision and recall for each class
+        precision = self.tp / (self.tp + self.fp + self.epsilon)
+        recall = self.tp / (self.tp + self.fn + self.epsilon)
+
+        # Calculate F1 score for each class
+        f1 = 2 * (precision * recall) / (precision + recall + self.epsilon)
+        
+        # Return the macro average F1 score
+        return tf.reduce_mean(f1)
+
+    def reset_state(self):
+        self.tp.assign(tf.zeros(self.num_classes))
+        self.fp.assign(tf.zeros(self.num_classes))
+        self.fn.assign(tf.zeros(self.num_classes))
+
+###########
+
+
+# --- 1. Instantiate your custom metric ---
+f1_metric = CustomF1Score(num_classes=3) # For positive, negative, neutral
+
+# --- 2. Compile the Model ---
+# Assume 'model' is a tf_keras.Model
+model.compile(
+    optimizer=tf_keras.optimizers.Adam(learning_rate=5e-5),
+    loss=tf_keras.losses.SparseCategoricalCrossentropy(from_logits=True),
+    metrics=['accuracy', f1_metric]
+)
+
+# --- 3. Set Up the ModelCheckpoint Callback ---
+checkpoint_callback = tf_keras.callbacks.ModelCheckpoint(
+    filepath="best_sentiment_model.keras",
+    monitor='val_f1_score',
+    mode='max',
+    save_best_only=True,
+    verbose=1
+)
