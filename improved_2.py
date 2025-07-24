@@ -1,3 +1,27 @@
+@tf.function
+def train_step(x_batch, y_batch, model, optimizer, loss_fns, metrics_map, temperature, alpha):
+    """Performs a single, compiled training step."""
+    kl_loss_fn, ce_loss_fn = loss_fns
+    train_loss_metric = metrics_map['train_loss']
+
+    with tf.GradientTape() as tape:
+        student_logits = model(x_batch, training=True).logits
+        teacher_logits = y_batch['teacher_logits']
+        hard_labels = y_batch['hard_labels']
+
+        soft_teacher_probs = tf.nn.softmax(teacher_logits / temperature)
+        soft_student_probs = tf.nn.softmax(student_logits / temperature)
+        distill_loss = kl_loss_fn(soft_teacher_probs, soft_student_probs) * (temperature**2)
+        
+        hard_loss = ce_loss_fn(hard_labels, student_logits)
+        total_loss = alpha * hard_loss + (1.0 - alpha) * distill_loss
+
+    grads = tape.gradient(total_loss, model.trainable_variables)
+    optimizer.apply_gradients(zip(grads, model.trainable_variables))
+    train_loss_metric.update_state(total_loss)
+
+#####################
+
 import numpy as np
 import tensorflow as tf
 
