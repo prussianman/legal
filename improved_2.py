@@ -1,3 +1,28 @@
+import numpy as np
+import tensorflow as tf
+
+# The logit string you have
+logit_string = 'tensor([-inf,-0.2344,-1.234])'
+
+# --- 1. Parse the string ---
+cleaned_string = logit_string.replace('tensor(', '').replace(')', '').replace('[', '').replace(']', '')
+string_values = cleaned_string.split(',')
+parsed_values = [float(v) for v in string_values]
+
+# --- 2. Handle -inf by replacing it with a more moderate number ---
+replacement_value = -100.0
+handled_values = [v if v != -np.inf else replacement_value for v in parsed_values]
+
+# --- 3. Convert to the final TensorFlow tensor ---
+final_tensor = tf.constant(handled_values, dtype=tf.float32)
+
+print(f"Original String: {logit_string}")
+print(f"Handled List: {handled_values}")
+print(f"Final Usable Tensor: {final_tensor}")
+
+##########
+
+
 import tensorflow as tf
 import tf_keras as keras
 from tf_keras import optimizers, losses, metrics
